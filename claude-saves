@@ -1,0 +1,493 @@
+#!/bin/bash
+# claude-saves — Claude Code session manager with tmux integration
+# https://github.com/TOKUMAINOUE/claude-saves
+
+set -euo pipefail
+
+VERSION="0.1.0"
+CONFIG_DIR="${CLAUDE_SAVES_CONFIG:-$HOME/.config/claude-saves}"
+SESSION_MAP_DIR="$CONFIG_DIR/sessions"
+CLAUDE_SESSIONS_DIR="$HOME/.claude/sessions"
+CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
+WORK_DIR="${CLAUDE_SAVES_WORKDIR:-$(pwd)}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ── Helpers ──────────────────────────────────────────────
+
+print_header() {
+  echo ""
+  echo -e "${BOLD}claude-saves${NC} ${DIM}v${VERSION}${NC}"
+  echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+print_error() {
+  echo -e "${RED}error:${NC} $1" >&2
+}
+
+print_success() {
+  echo -e "${GREEN}✓${NC} $1"
+}
+
+print_info() {
+  echo -e "${BLUE}→${NC} $1"
+}
+
+# ── Dependency checks ────────────────────────────────────
+
+check_tmux() {
+  if ! command -v tmux &>/dev/null; then
+    echo ""
+    echo -e "${YELLOW}tmux が見つかりません。${NC}"
+    echo ""
+    echo "claude-saves は tmux が必要です。"
+    echo ""
+
+    # Detect OS and suggest install
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      echo -e "インストール: ${BOLD}brew install tmux${NC}"
+      echo ""
+      read -rp "今すぐインストールしますか？ (y/N) > " answer
+      if [[ "$answer" =~ ^[yY]$ ]]; then
+        if command -v brew &>/dev/null; then
+          brew install tmux
+          print_success "tmux をインストールしました"
+        else
+          print_error "Homebrew が見つかりません。先に https://brew.sh をインストールしてください"
+          exit 1
+        fi
+      else
+        exit 1
+      fi
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+      if command -v apt &>/dev/null; then
+        echo -e "インストール: ${BOLD}sudo apt install tmux${NC}"
+      elif command -v dnf &>/dev/null; then
+        echo -e "インストール: ${BOLD}sudo dnf install tmux${NC}"
+      elif command -v pacman &>/dev/null; then
+        echo -e "インストール: ${BOLD}sudo pacman -S tmux${NC}"
+      fi
+      echo ""
+      read -rp "今すぐインストールしますか？ (y/N) > " answer
+      if [[ "$answer" =~ ^[yY]$ ]]; then
+        if command -v apt &>/dev/null; then
+          sudo apt install -y tmux
+        elif command -v dnf &>/dev/null; then
+          sudo dnf install -y tmux
+        elif command -v pacman &>/dev/null; then
+          sudo pacman -S --noconfirm tmux
+        fi
+        print_success "tmux をインストールしました"
+      else
+        exit 1
+      fi
+    else
+      echo "お使いのOSのパッケージマネージャーで tmux をインストールしてください"
+      exit 1
+    fi
+  fi
+}
+
+check_claude() {
+  if ! command -v claude &>/dev/null; then
+    print_error "Claude Code が見つかりません"
+    echo ""
+    echo -e "インストール: ${BOLD}npm install -g @anthropic-ai/claude-code${NC}"
+    exit 1
+  fi
+}
+
+# ── Session helpers ──────────────────────────────────────
+
+ensure_dirs() {
+  mkdir -p "$SESSION_MAP_DIR"
+}
+
+# Get actual Claude Code session ID from a running tmux pane
+find_claude_session_id() {
+  local tmux_session="$1"
+  local pane_pid
+  pane_pid=$(tmux list-panes -t "$tmux_session" -F '#{pane_pid}' 2>/dev/null | head -1)
+
+  if [[ -z "$pane_pid" ]]; then
+    return 1
+  fi
+
+  # Find claude process under this pane
+  local claude_pids
+  claude_pids=$(pgrep -P "$pane_pid" -f "claude" 2>/dev/null || true)
+
+  if [[ -n "$claude_pids" ]]; then
+    for pid in $claude_pids; do
+      local session_file="$CLAUDE_SESSIONS_DIR/${pid}.json"
+      if [[ -f "$session_file" ]]; then
+        python3 -c "import json; print(json.load(open('$session_file'))['sessionId'])" 2>/dev/null
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+# Check if Claude session data exists
+session_data_exists() {
+  local session_id="$1"
+  local project_dir
+
+  # Search for .jsonl file matching this session ID
+  for project_dir in "$CLAUDE_PROJECTS_DIR"/*/; do
+    if [[ -f "${project_dir}${session_id}.jsonl" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# Check if Claude is running in a tmux session
+is_claude_running() {
+  local tmux_session="$1"
+  local pane_pid
+  pane_pid=$(tmux list-panes -t "$tmux_session" -F '#{pane_pid}' 2>/dev/null | head -1)
+
+  if [[ -n "$pane_pid" ]]; then
+    if pgrep -P "$pane_pid" -f "claude" &>/dev/null; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Rename cmux tab if available
+rename_tab() {
+  local name="$1"
+  if command -v cmux &>/dev/null; then
+    cmux workspace-action --action rename --title "$name" 2>/dev/null || true
+  fi
+}
+
+# Detect tmux-resurrect directory
+get_resurrect_dir() {
+  if [[ -d "$HOME/.local/share/tmux/resurrect" ]]; then
+    echo "$HOME/.local/share/tmux/resurrect"
+  else
+    echo "$HOME/.tmux/resurrect"
+  fi
+}
+
+# ── Commands ─────────────────────────────────────────────
+
+cmd_interactive() {
+  # Block if already inside tmux
+  if [[ -n "${TMUX:-}" ]]; then
+    print_error "既に tmux セッション内です"
+    exit 1
+  fi
+
+  # Try resurrect if no tmux server running
+  if ! tmux list-sessions &>/dev/null; then
+    local resurrect_dir
+    resurrect_dir=$(get_resurrect_dir)
+    local resurrect_file="$resurrect_dir/last"
+
+    if [[ -L "$resurrect_file" || -f "$resurrect_file" ]]; then
+      print_info "保存済みセッションを復元中..."
+      tmux new-session -d -s _restore
+      sleep 2
+      tmux run-shell "$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh" 2>/dev/null || true
+      sleep 2
+      tmux kill-session -t _restore 2>/dev/null || true
+      print_success "復元完了"
+      echo ""
+    fi
+  fi
+
+  # Collect existing sessions
+  local sessions=()
+  if tmux list-sessions &>/dev/null; then
+    while IFS= read -r line; do
+      sessions+=("$line")
+    done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
+  fi
+
+  # Display menu
+  print_header
+  echo -e "  ${BOLD}0${NC}) 新規セッション作成"
+  echo -e "  ${BOLD}r${NC}) 保存済みセッションを復元"
+  echo -e "  ${BOLD}k${NC}) セッションをキル"
+
+  if [[ ${#sessions[@]} -gt 0 ]]; then
+    echo ""
+    for i in "${!sessions[@]}"; do
+      local map_file="$SESSION_MAP_DIR/${sessions[$i]}"
+      if [[ -f "$map_file" ]]; then
+        local sid
+        sid=$(cat "$map_file")
+        if session_data_exists "$sid"; then
+          echo -e "  ${BOLD}$((i+1))${NC}) ${sessions[$i]} ${GREEN}[復元可]${NC}"
+        else
+          echo -e "  ${BOLD}$((i+1))${NC}) ${sessions[$i]} ${DIM}[期限切れ]${NC}"
+        fi
+      else
+        echo -e "  ${BOLD}$((i+1))${NC}) ${sessions[$i]}"
+      fi
+    done
+  fi
+
+  echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  printf "選択 > "
+  read -r choice
+
+  case "$choice" in
+    0|"")
+      cmd_new
+      ;;
+    r|R)
+      cmd_restore
+      ;;
+    k|K)
+      cmd_kill_interactive "${sessions[@]}"
+      ;;
+    *)
+      if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#sessions[@]} )); then
+        local target="${sessions[$((choice-1))]}"
+        cmd_attach "$target"
+      else
+        print_error "無効な選択です"
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+cmd_new() {
+  printf "セッション名 (空欄で claude) > "
+  read -r session_name
+  session_name="${session_name:-claude}"
+
+  # Check for duplicate session name
+  if tmux has-session -t "$session_name" 2>/dev/null; then
+    print_error "セッション「$session_name」は既に存在します"
+    exit 1
+  fi
+
+  tmux new-session -d -s "$session_name" -c "$WORK_DIR"
+  tmux send-keys -t "$session_name" "cd $WORK_DIR && claude" Enter
+
+  # Background: capture actual session ID after Claude starts
+  (
+    sleep 5
+    local actual_sid
+    actual_sid=$(find_claude_session_id "$session_name" 2>/dev/null || true)
+    if [[ -n "$actual_sid" ]]; then
+      echo "$actual_sid" > "$SESSION_MAP_DIR/$session_name"
+    fi
+  ) &
+
+  rename_tab "$session_name"
+  tmux attach-session -t "$session_name"
+}
+
+cmd_attach() {
+  local target="$1"
+  local map_file="$SESSION_MAP_DIR/$target"
+
+  # Check if Claude is already running
+  if is_claude_running "$target"; then
+    # Save session ID if not saved yet
+    local actual_sid
+    actual_sid=$(find_claude_session_id "$target" 2>/dev/null || true)
+    if [[ -n "$actual_sid" ]]; then
+      echo "$actual_sid" > "$map_file"
+    fi
+    rename_tab "$target"
+    tmux attach-session -t "$target"
+    return
+  fi
+
+  if [[ -f "$map_file" ]]; then
+    local claude_session_id
+    claude_session_id=$(cat "$map_file")
+
+    if session_data_exists "$claude_session_id"; then
+      tmux send-keys -t "$target" "cd $WORK_DIR && claude --resume $claude_session_id" Enter
+    else
+      print_info "セッションデータが見つかりません。新規起動します..."
+      tmux send-keys -t "$target" "cd $WORK_DIR && claude" Enter
+      (
+        sleep 5
+        local actual_sid
+        actual_sid=$(find_claude_session_id "$target" 2>/dev/null || true)
+        if [[ -n "$actual_sid" ]]; then
+          echo "$actual_sid" > "$map_file"
+        fi
+      ) &
+    fi
+  else
+    tmux send-keys -t "$target" "cd $WORK_DIR && claude" Enter
+    (
+      sleep 5
+      local actual_sid
+      actual_sid=$(find_claude_session_id "$target" 2>/dev/null || true)
+      if [[ -n "$actual_sid" ]]; then
+        echo "$actual_sid" > "$map_file"
+      fi
+    ) &
+  fi
+
+  rename_tab "$target"
+  tmux attach-session -t "$target"
+}
+
+cmd_restore() {
+  local resurrect_dir
+  resurrect_dir=$(get_resurrect_dir)
+  local resurrect_file="$resurrect_dir/last"
+
+  if [[ ! -L "$resurrect_file" && ! -f "$resurrect_file" ]]; then
+    print_error "保存済みセッションがありません"
+    exit 0
+  fi
+
+  print_info "保存済みセッションを復元中..."
+
+  if ! tmux list-sessions 2>/dev/null; then
+    tmux new-session -d -s _restore
+  fi
+
+  tmux run-shell "$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh" 2>/dev/null || true
+  sleep 2
+  tmux kill-session -t _restore 2>/dev/null || true
+
+  print_success "復元完了。もう一度 claude-saves を実行してセッションを選択してください"
+}
+
+cmd_kill_interactive() {
+  local sessions=("$@")
+
+  if [[ ${#sessions[@]} -eq 0 ]]; then
+    print_error "キルできるセッションがありません"
+    exit 0
+  fi
+
+  echo ""
+  echo "キルするセッションを選択 (a=全部):"
+  for i in "${!sessions[@]}"; do
+    echo "  $((i+1))) ${sessions[$i]}"
+  done
+  printf "選択 > "
+  read -r kill_choice
+
+  if [[ "$kill_choice" =~ ^[aA]$ ]]; then
+    tmux kill-server
+    rm -f "$SESSION_MAP_DIR"/*
+    print_success "全セッションをキルしました"
+  elif [[ "$kill_choice" =~ ^[0-9]+$ ]] && (( kill_choice >= 1 && kill_choice <= ${#sessions[@]} )); then
+    local target="${sessions[$((kill_choice-1))]}"
+    tmux kill-session -t "$target"
+    rm -f "$SESSION_MAP_DIR/$target"
+    print_success "「$target」をキルしました"
+  else
+    print_error "無効な選択です"
+    exit 1
+  fi
+}
+
+cmd_list() {
+  if ! tmux list-sessions &>/dev/null; then
+    echo "アクティブなセッションはありません"
+    return
+  fi
+
+  print_header
+  echo ""
+
+  while IFS= read -r session; do
+    local map_file="$SESSION_MAP_DIR/$session"
+    local status_text=""
+
+    if is_claude_running "$session"; then
+      status_text="${GREEN}● Claude実行中${NC}"
+    elif [[ -f "$map_file" ]]; then
+      local sid
+      sid=$(cat "$map_file")
+      if session_data_exists "$sid"; then
+        status_text="${CYAN}○ 復元可${NC}"
+      else
+        status_text="${DIM}○ 期限切れ${NC}"
+      fi
+    else
+      status_text="${DIM}○ マッピングなし${NC}"
+    fi
+
+    echo -e "  ${BOLD}$session${NC}  $status_text"
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
+
+  echo ""
+}
+
+cmd_version() {
+  echo "claude-saves v${VERSION}"
+}
+
+cmd_help() {
+  print_header
+  echo ""
+  echo "使い方:"
+  echo "  claude-saves              セッション選択画面を開く"
+  echo "  claude-saves new          新規セッションを作成"
+  echo "  claude-saves list         セッション一覧を表示"
+  echo "  claude-saves kill         セッションをキル"
+  echo "  claude-saves restore      tmux-resurrectから復元"
+  echo "  claude-saves --version    バージョンを表示"
+  echo "  claude-saves --help       このヘルプを表示"
+  echo ""
+  echo "環境変数:"
+  echo "  CLAUDE_SAVES_WORKDIR      作業ディレクトリ (デフォルト: カレント)"
+  echo "  CLAUDE_SAVES_CONFIG       設定ディレクトリ (デフォルト: ~/.config/claude-saves)"
+  echo ""
+}
+
+# ── Main ─────────────────────────────────────────────────
+
+main() {
+  check_tmux
+  check_claude
+  ensure_dirs
+
+  local subcmd="${1:-}"
+
+  case "$subcmd" in
+    new)        cmd_new ;;
+    list|ls)    cmd_list ;;
+    kill)
+      shift
+      local sessions=()
+      while IFS= read -r line; do
+        sessions+=("$line")
+      done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
+      cmd_kill_interactive "${sessions[@]}"
+      ;;
+    restore)    cmd_restore ;;
+    --version|-v) cmd_version ;;
+    --help|-h)  cmd_help ;;
+    "")         cmd_interactive ;;
+    *)
+      print_error "不明なコマンド: $subcmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
