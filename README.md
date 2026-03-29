@@ -1,23 +1,23 @@
 # claude-saves
 
-Claude Code session manager with tmux integration.
+Claude Code のセッションを tmux と連携して管理するツール。
 
-Automatically saves and restores Claude Code sessions across tmux sessions. Never lose your conversation context again.
+tmux セッションと Claude Code のセッションを自動で紐付けて、会話の続きをいつでも再開できます。
 
-## The Problem
+## 課題
 
-Claude Code sessions are tied to process IDs that change every restart. When you detach from tmux or your terminal closes, there's no easy way to resume the exact conversation you were having.
+Claude Code のセッションはプロセスIDに紐づいているため、ターミナルを閉じたり tmux をデタッチすると、元の会話に戻る方法がありません。
 
-## The Solution
+## 解決
 
-`claude-saves` maps tmux sessions to Claude Code session IDs, so you can:
+`claude-saves` は tmux セッションと Claude Code のセッションIDを自動でマッピングします。
 
-- **Resume conversations** — Pick up exactly where you left off
-- **Multiple workspaces** — Run different Claude sessions in different tmux windows
-- **Auto-recovery** — Session IDs are captured automatically after Claude starts
-- **tmux-resurrect support** — Works with tmux-resurrect for full environment recovery
+- **会話の再開** — 前回の続きからそのまま再開
+- **複数ワークスペース** — tmux ウィンドウごとに別の Claude セッションを管理
+- **自動保存** — Claude 起動後にセッションIDを自動取得・保存
+- **tmux-resurrect対応** — tmux-resurrect と組み合わせて環境ごと復元
 
-## Install
+## インストール
 
 ```bash
 git clone https://github.com/TOKUMAINOUE/claude-saves.git
@@ -25,33 +25,33 @@ cd claude-saves
 bash install.sh
 ```
 
-Or manually:
+手動インストール:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TOKUMAINOUE/claude-saves/main/claude-saves -o /usr/local/bin/claude-saves
 chmod +x /usr/local/bin/claude-saves
 ```
 
-### Requirements
+### 必要なもの
 
-- [tmux](https://github.com/tmux/tmux) — Required. Auto-install prompt if missing.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Required.
-- [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) — Optional. For full session restore.
+- [tmux](https://github.com/tmux/tmux) — 必須。未インストールの場合は自動でインストールを案内します
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — 必須
+- [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) — 任意。セッション環境の完全復元に使用
 
-## Usage
+## 使い方
 
 ```bash
-claude-saves              # Interactive session picker
-claude-saves new          # Create new session
-claude-saves list         # List all sessions with status
-claude-saves kill         # Kill a session
-claude-saves restore      # Restore from tmux-resurrect
-claude-saves --help       # Show help
+claude-saves              # セッション選択画面を開く
+claude-saves new          # 新規セッションを作成
+claude-saves list         # セッション一覧を表示
+claude-saves kill         # セッションをキル
+claude-saves restore      # tmux-resurrectから復元
+claude-saves --help       # ヘルプを表示
 ```
 
-### Interactive Mode
+### インタラクティブモード
 
-Just run `claude-saves`:
+`claude-saves` を実行するだけ:
 
 ```
 claude-saves v0.1.0
@@ -67,31 +67,31 @@ claude-saves v0.1.0
 選択 >
 ```
 
-### Session Status
+### セッションステータス
 
-| Status | Meaning |
-|--------|---------|
-| `● Claude実行中` | Claude Code is running in this session |
-| `○ 復元可` | Session data exists, can be resumed |
-| `○ 期限切れ` | Session data expired or deleted |
-| `○ マッピングなし` | tmux session without Claude mapping |
+| ステータス | 意味 |
+|-----------|------|
+| `● Claude実行中` | このセッションで Claude Code が動作中 |
+| `○ 復元可` | セッションデータあり。再開可能 |
+| `○ 期限切れ` | セッションデータが期限切れまたは削除済み |
+| `○ マッピングなし` | Claude との紐付けがない tmux セッション |
 
-## How It Works
+## 仕組み
 
-1. **Create** — When you create a new session, `claude-saves` starts a tmux session and launches Claude Code
-2. **Capture** — After Claude starts, the actual session ID is captured from `~/.claude/sessions/<pid>.json` and saved to `~/.config/claude-saves/sessions/<name>`
-3. **Resume** — When you select an existing session, it checks if Claude is still running. If not, it uses `claude --resume <session-id>` to restore the conversation
-4. **Fallback** — If session data has expired, it starts a fresh Claude instance and saves the new session ID
+1. **作成** — 新規セッション作成時に tmux セッションを起動し、Claude Code を開始
+2. **取得** — Claude 起動後、`~/.claude/sessions/<pid>.json` から実際のセッションIDを取得して `~/.config/claude-saves/sessions/<name>` に保存
+3. **復元** — 既存セッションを選択すると、Claude が実行中か確認。停止中なら `claude --resume <session-id>` で会話を復元
+4. **フォールバック** — セッションデータが期限切れの場合は新規 Claude インスタンスを起動し、新しいセッションIDを保存
 
-## Configuration
+## 設定
 
-Environment variables:
+環境変数:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CLAUDE_SAVES_WORKDIR` | Current directory | Working directory for new sessions |
-| `CLAUDE_SAVES_CONFIG` | `~/.config/claude-saves` | Config and session data directory |
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `CLAUDE_SAVES_WORKDIR` | カレントディレクトリ | 新規セッションの作業ディレクトリ |
+| `CLAUDE_SAVES_CONFIG` | `~/.config/claude-saves` | 設定・セッションデータの保存先 |
 
-## License
+## ライセンス
 
 MIT
