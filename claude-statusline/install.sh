@@ -7,6 +7,24 @@ SETTINGS="$HOME/.claude/settings.json"
 
 echo "=== claude-statusline installer ==="
 
+# 0. jq check & install
+if ! command -v jq &>/dev/null; then
+    echo "[0] jq not found. Installing..."
+    if command -v brew &>/dev/null; then
+        brew install jq
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq jq
+    elif command -v yum &>/dev/null; then
+        sudo yum install -y jq
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm jq
+    else
+        echo "Error: jq をインストールできません。手動でインストールしてください: https://jqlang.github.io/jq/"
+        exit 1
+    fi
+    echo "    jq installed"
+fi
+
 # 1. Copy script
 mkdir -p "$HOME/.claude"
 cp "$SCRIPT_DIR/statusline.sh" "$DEST"
