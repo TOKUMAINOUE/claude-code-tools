@@ -8,6 +8,7 @@ Claude Code ユーティリティ集。
 |--------|------|
 | [claude-saves](./claude-saves/) | セッションを tmux と連携して管理 |
 | [claude-statusline](./claude-statusline/) | ステータスラインにモデル名・コンテキスト・レート制限をゲージ表示 |
+| [school-presentation-script](./school-presentation-script/) | 学校説明会プレゼン台本 |
 
 ## インストール
 
