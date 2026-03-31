@@ -26,8 +26,8 @@ Opus 4.6 (1M context) │ ctx ██░░░░░░░░ 0.10M/1M │ 5h █
 ## インストール
 
 ```bash
-git clone https://github.com/TOKUMAINOUE/claude-saves.git
-cd claude-saves/claude-statusline
+git clone https://github.com/TOKUMAINOUE/claude-code-tools.git
+cd claude-code-tools/claude-statusline
 bash install.sh
 ```
 
