@@ -89,17 +89,17 @@ if [ -n "$five_hour" ]; then
     pct_int=$(printf '%.0f' "$five_hour")
     remain=""
     if [ -n "$five_hour_reset" ]; then
-        remain=" $(time_remaining "$five_hour_reset")"
+        remain="$(time_remaining "$five_hour_reset")"
     fi
-    parts+=("5h $(gauge "$pct_int") $(echo -e "$(color_for_pct "$pct_int")${pct_int}%${R}${DIM} reset${remain}${R}")")
+    parts+=("5h $(gauge "$pct_int") $(echo -e "$(color_for_pct "$pct_int")${pct_int}%${R}${DIM} ${remain}${R}")")
 fi
 if [ -n "$seven_day" ]; then
     pct_int=$(printf '%.0f' "$seven_day")
     remain=""
     if [ -n "$seven_day_reset" ]; then
-        remain=" $(time_remaining "$seven_day_reset")"
+        remain="$(time_remaining "$seven_day_reset")"
     fi
-    parts+=("7d $(gauge "$pct_int") $(echo -e "$(color_for_pct "$pct_int")${pct_int}%${R}${DIM} reset${remain}${R}")")
+    parts+=("7d $(gauge "$pct_int") $(echo -e "$(color_for_pct "$pct_int")${pct_int}%${R}${DIM} ${remain}${R}")")
 fi
 
 # Join with separator
