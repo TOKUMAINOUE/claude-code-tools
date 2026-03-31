@@ -53,7 +53,7 @@ time_remaining() {
     local now=$(date +%s)
     local diff=$((reset_ts - now))
     if [ "$diff" -le 0 ]; then
-        echo "reset済"
+        echo "reset"
         return
     fi
     local days=$((diff / 86400))
