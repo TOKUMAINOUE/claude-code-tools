@@ -1,5 +1,18 @@
 # claude-saves
 
+Claude Code ユーティリティ集。
+
+## ツール一覧
+
+| ツール | 説明 |
+|--------|------|
+| [claude-saves](./claude-saves) | セッションを tmux と連携して管理 |
+| [claude-statusline](./claude-statusline/) | ステータスラインにモデル名・コンテキスト・レート制限をゲージ表示 |
+
+---
+
+# claude-saves
+
 Claude Code のセッションを tmux と連携して管理するツール。
 
 tmux セッションと Claude Code のセッションを自動で紐付けて、会話の続きをいつでも再開できます。
